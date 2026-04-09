@@ -1,0 +1,111 @@
+#+title: Telegram Bridge
+#+state: draft
+#+FILETAGS: :extension:feature:architecture:
+
+* Summary
+
+A persistent HTTP server that acts as the sole Telegram Bot API consumer, dispatching incoming messages to the correct pi session via localhost. Solves the multi-session polling race condition in =telegram-connect=.
+
+* Motivation
+
+=telegram-connect= polls Telegram's =getUpdates= directly from each pi session. This is destructive — whichever instance polls first consumes the update. When multiple sessions share a bot token, messages are lost or misrouted.
+
+** Goals
+- Single polling loop for the entire machine — only the bridge talks to Telegram.
+- Pi sessions register/unregister via localhost HTTP — no direct Telegram polling.
+- Route inbound messages to the correct session by forum topic ID.
+- Survive pi session restarts — the bridge runs independently.
+- Graceful degradation — if no pi session is connected, reply via Telegram: "No pi session connected for this project."
+- Launched via =/telegram start= or a standalone command; stays running after pi exits.
+
+** Non-Goals
+- Cloud deployment or public-facing server.
+- Multi-user support — single user, single machine.
+- Replacing =telegram-connect= entirely — the bridge is an optional backend that =telegram-connect= can use instead of direct polling.
+
+* Proposal
+
+** Architecture
+
+#+begin_example
+┌──────────────────────────────────────────────────────┐
+│  telegram-bridge (persistent process)                │
+│  PID file: ~/.config/pi-telegram-bridge/bridge.pid   │
+│  Config:   ~/.config/pi-telegram-bridge/config.json  │
+│                                                      │
+│  Telegram Bot API ←→ Long-poll loop (single)         │
+│                                                      │
+│  Pi sessions ←→ HTTP API (localhost:PORT)             │
+│    POST /register   { sessionId, cwd, topicId }      │
+│    POST /unregister { sessionId }                    │
+│    POST /send       { sessionId, text }              │
+│    GET  /updates    { sessionId } → SSE stream       │
+│                                                      │
+│  Routing table: topicId → sessionId                  │
+│  Fallback: no session → Telegram reply               │
+└──────────────────────────────────────────────────────┘
+#+end_example
+
+** Session Lifecycle
+
+1. User runs =/telegram start= in pi session.
+2. =telegram-connect= checks if bridge is running (HTTP health check on localhost).
+3. If not running: spawn bridge as a detached background process.
+4. Register this session: =POST /register { sessionId, cwd, topicId }=.
+5. Bridge starts routing messages for this topic to this session.
+6. On =session_shutdown=: =POST /unregister { sessionId }=.
+7. Bridge removes session from routing table.
+8. If no sessions remain, bridge keeps running (idle) — ready for next session.
+
+** Inbound Message Flow
+
+#+begin_example
+Telegram message (topicId=123)
+  → bridge long-poll receives update
+  → lookup topicId=123 in routing table
+  → found sessionId=abc
+  → push to SSE stream for session abc
+  → telegram-connect in pi session abc receives via EventSource
+  → injects as user prompt via pi.sendUserMessage()
+
+If no session registered for topicId=123:
+  → bridge replies: "⚠️ No pi session connected for this topic."
+#+end_example
+
+** Outbound Message Flow
+
+#+begin_example
+pi agent finishes (session abc)
+  → telegram-connect calls POST /send { sessionId, text, topicId }
+  → bridge sends via Telegram Bot API (sendMessage, sendMessageDraft)
+  → bridge handles chunking, HTML formatting, draft throttling
+#+end_example
+
+** Config
+
+#+begin_src json
+{
+  "botToken": "123456:ABC-DEF...",
+  "chatId": 987654321,
+  "allowedUserId": 987654321,
+  "port": 19384,
+  "streaming": true
+}
+#+end_src
+
+** Open Questions
+
+- Should the bridge handle draft streaming, or should each pi session still call =sendMessageDraft= directly?
+- Should the bridge auto-exit after N minutes of no registered sessions?
+- How to handle pi sessions that crash without calling =/unregister= — heartbeat/timeout?
+- Should the bridge be a separate npm package or built into =telegram-connect=?
+
+* Implementation Notes
+
+The bridge is a Node.js HTTP server using built-in =node:http= — no Express/Fastify dependency. The SSE (Server-Sent Events) protocol is simple enough to implement directly.
+
+The bridge process should:
+- Write its PID to =~/.config/pi-telegram-bridge/bridge.pid=
+- Listen on a localhost-only port (configurable, default high port)
+- Use =process.disconnect()= / =child_process.spawn({ detached: true })= to survive pi exit
+- Log to =~/.config/pi-telegram-bridge/bridge.log=

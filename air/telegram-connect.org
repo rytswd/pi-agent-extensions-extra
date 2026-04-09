@@ -1,0 +1,61 @@
+#+title: Telegram Connect
+#+state: complete
+#+FILETAGS: :extension:feature:
+
+* Summary
+
+A pi extension that bridges coding agent sessions to Telegram for mobile use. Bidirectional: agent responses are pushed to Telegram, and text/photos from Telegram are injected as user prompts.
+
+Based on [[https://github.com/aldoborrero/pi-agent-kit/tree/main/extensions/walkie][walkie]] by [[https://github.com/aldoborrero][aldoborrero]], ported as a standalone extension with XDG-compliant config and no external dependencies.
+
+* Motivation
+
+Working with pi on long-running tasks, you often switch context — go to another terminal, check your phone, etc. Having agent responses pushed to Telegram means you can monitor and steer pi from anywhere.
+
+** Goals
+- Bidirectional messaging between pi and Telegram.
+- Live draft streaming so you see the response as it generates.
+- Session-scoped activation — must explicitly opt in, not auto-connect.
+- Config and credentials at =~/.config/pi-telegram-connect/= (XDG-compliant).
+- Zero npm dependencies.
+
+** Non-Goals
+- Voice/STT transcription (removed from walkie port).
+- Auto-connecting all pi sessions to Telegram.
+- Persistent connection across pi restarts (see =telegram-bridge.org=).
+
+* Implementation
+
+** Architecture
+
+#+begin_example
+pi session
+  │
+  ├─ /telegram start → load config, start polling loop
+  │
+  ├─ agent_start  → reset counters, start typing indicator, init draft state
+  ├─ message_update → append to draft buffer → sendMessageDraft (throttled)
+  ├─ turn_start   → increment turn counter
+  ├─ tool_call    → update phase label (🔧 tool…)
+  ├─ tool_result  → count file mutations
+  ├─ agent_end    → send final message (threaded reply), react ✅
+  │
+  └─ polling loop (background, AbortController-managed)
+       └─ getUpdates(timeout=30) → handleUpdate
+            ├─ text → react 👀, inject via sendUserMessage
+            └─ photo → download, inject as image content
+#+end_example
+
+** Key Design Decisions
+- *Session-scoped enabled*: =enabled= is never persisted to config file. Each session starts disabled.
+- *Forum topics*: Each project can have its own topic thread for multi-project routing.
+- *Text debounce*: 3s window merges rapid consecutive messages into one prompt.
+- *Message queue*: Messages arriving mid-run are queued, drained after =agent_end=.
+- *Draft throttling*: 512B min delta, 4s min interval, 12s heartbeat, 3000B transport cap.
+- *Inline keyboards*: Agent can present tappable choice buttons via JSON block in response.
+
+** Known Limitation
+
+Multiple pi instances sharing the same bot token race for Telegram updates. =getUpdates= is destructive — whichever instance polls first consumes the update. Forum topic filtering helps with outbound routing but doesn't solve inbound races.
+
+See =air/telegram-bridge.org= for the planned solution.
