@@ -19,8 +19,8 @@ Direct Telegram polling from each pi session is destructive — =getUpdates= del
 #+begin_example
 ┌──────────────────────────────────────────────────────┐
 │  pi-bridge (Go binary, persistent)                   │
-│  Config: ~/.config/pi-bridge/config.json             │
-│  PID:    ~/.config/pi-bridge/bridge.pid              │
+│  Config: ~/.config/pi-agent-extensions/bridge/config.json  │
+│  PID:    ~/.config/pi-agent-extensions/bridge/bridge.pid   │
 │                                                      │
 │  Telegram Bot API ←→ Long-poll goroutine (single)    │
 │                                                      │
@@ -60,7 +60,7 @@ Currently one adapter: =adapter/telegram/=. Future adapters (Discord, Slack, Mat
 
 ** Config
 
-=~/.config/pi-bridge/config.json=:
+=~/.config/pi-agent-extensions/bridge/config.json=:
 #+begin_src json
 {
   "port": 19384,
@@ -95,9 +95,9 @@ bridge/
 ** Process Lifecycle
 
 - Spawned by =telegram-connect= extension as detached process (=child_process.spawn= with =detached: true, stdio: 'ignore'=).
-- Writes PID to =~/.config/pi-bridge/bridge.pid=.
+- Writes PID to =~/.config/pi-agent-extensions/bridge/bridge.pid=.
 - Survives pi session exit.
-- Killed via =kill $(cat ~/.config/pi-bridge/bridge.pid)= or SIGTERM.
+- Killed via =kill $(cat ~/.config/pi-agent-extensions/bridge/bridge.pid)= or SIGTERM.
 - On death: sessions auto-reconnect within ~10s (SSE reconnect respawns bridge).
 
 ** Session Management

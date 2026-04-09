@@ -5,7 +5,7 @@
 #+html:<div align="center">
 #+html:<p>Extra extensions for <a href="https://github.com/mariozechner/pi">pi</a> coding agent — useful for some, not all</p>
 #+html:<p>
-#+html:<img src="https://img.shields.io/badge/pi-extensions--extra-blue?style=flat-square" alt="pi extensions extra">
+#+html:<img src="https://img.shields.io/badge/pi-extensions--extra-7c3aed?style=flat-square" alt="pi extensions extra">
 #+html:<a href="https://github.com/rytswd/pi-agent-extensions-extra"><img src="https://img.shields.io/badge/Source-grey?style=flat-square&logo=github" alt="GitHub Source"></a>
 #+html:<img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT License">
 #+html:</p>
@@ -92,7 +92,7 @@ CGO_ENABLED=0 go install .
 - *Source*: [[https://github.com/rytswd/pi-agent-extensions-extra/tree/main/telegram-connect][telegram-connect/]]
 - *License*: MIT
 - *Command*: =/telegram=
-- *Config*: =~/.config/pi-telegram-connect/config.json=
+- *Config*: =~/.config/pi-agent-extensions/telegram-connect/config.json=
 - *Based on*: [[https://github.com/aldoborrero/pi-agent-kit/tree/main/extensions/walkie][walkie]] by [[https://github.com/aldoborrero][aldoborrero]]
 
 *Description*: Bridges pi coding agent sessions to Telegram for mobile use. Fully bidirectional — agent responses are pushed to Telegram, and text/photos from Telegram are injected as user prompts.
@@ -176,7 +176,7 @@ Sessions without a topic fall back to direct Telegram polling (single-session on
 
 *Differences from walkie*:
 - No voice/STT support (removed entirely)
-- XDG-compliant config at =~/.config/pi-telegram-connect/= (Nix-store safe)
+- XDG-compliant config at =~/.config/pi-agent-extensions/telegram-connect/= (Nix-store safe)
 - Standalone — no dependency on pi-agent-kit internals
 - Multi-session safe via =pi-bridge= (Go server with adapter pattern)
 - Command: =/telegram= instead of =/walkie=

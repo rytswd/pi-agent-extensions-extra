@@ -53,7 +53,7 @@ pi-agent-extensions-extra/
 ### telegram-connect/
 Bridges pi sessions to Telegram. Bidirectional: agent responses pushed to phone, text/photos from Telegram injected as prompts. Two modes: bridge (multi-session safe via pi-bridge) and direct (single-session fallback).
 
-- **Config**: `~/.config/pi-telegram-connect/config.json`
+- **Config**: `~/.config/pi-agent-extensions/telegram-connect/config.json`
 - **Commands**: `/telegram`, `/telegram setup`, `/telegram start`, `/telegram stop`, `/telegram topic`
 - **Activation**: Session-scoped — must run `/telegram` per session
 - **Bridge mode**: Used when topicId configured — routes via pi-bridge
@@ -66,7 +66,7 @@ Bridges pi sessions to Telegram. Bidirectional: agent responses pushed to phone,
 Generic Go message bridge server. Currently supports Telegram adapter, extensible to Discord/Slack/Matrix via adapter interface. Single binary, zero external deps.
 
 - **Binary**: `pi-bridge` (built via `CGO_ENABLED=0 go install .`)
-- **Config**: `~/.config/pi-bridge/config.json` (auto-created by telegram-connect)
+- **Config**: `~/.config/pi-agent-extensions/bridge/config.json` (auto-created by telegram-connect)
 - **Port**: 19384 (configurable)
 - **Features**: Topic-based routing, SSE event streams, stale session cleanup, topic conflict rejection
 - **Air doc**: `air/telegram-bridge.org`
