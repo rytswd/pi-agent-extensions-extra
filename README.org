@@ -1,0 +1,193 @@
+#+TITLE: pi-agent-extensions-extra
+#+AUTHOR: rytswd
+#+OPTIONS: toc:3 num:nil ^:nil
+
+#+html:<div align="center">
+#+html:<p>Extra extensions for <a href="https://github.com/mariozechner/pi">pi</a> coding agent — useful for some, not all</p>
+#+html:<p>
+#+html:<img src="https://img.shields.io/badge/pi-extensions--extra-blue?style=flat-square" alt="pi extensions extra">
+#+html:<a href="https://github.com/rytswd/pi-agent-extensions-extra"><img src="https://img.shields.io/badge/Source-grey?style=flat-square&logo=github" alt="GitHub Source"></a>
+#+html:<img src="https://img.shields.io/badge/License-MIT-blue?style=flat-square" alt="MIT License">
+#+html:</p>
+#+html:</div>
+
+-----
+
+** 🌅 Overview
+
+*pi-agent-extensions-extra* is a collection of extra [[https://github.com/mariozechner/pi][pi]] coding agent extensions — useful for some, not all. Each extension is a standalone TypeScript module that plugs into pi's extension system.
+
+This is a companion to [[https://github.com/rytswd/pi-agent-extensions][pi-agent-extensions]], which contains extensions intended for broader use. The extensions here are more opinionated or depend on external services (e.g. Telegram).
+
+** 📦 Installation
+
+Choose one of the following methods:
+
+#+html:<details>
+#+html:<summary><b>Method 1: Install via pi Package Manager</b></summary>
+#+html:<br>
+
+#+begin_src bash
+pi install git:github/rytswd/pi-agent-extensions-extra
+#+end_src
+
+This command:
+1. Clones the repository to =~/.pi/agent/git/=
+2. Runs =npm install= to install dependencies
+3. Adds the package path to =~/.pi/agent/settings.json= (="packages"= stanza)
+4. Makes all extensions available to pi automatically
+
+#+html:</details>
+
+#+html:<details>
+#+html:<summary><b>Method 2: Manual Installation via Git Clone</b></summary>
+#+html:<br>
+
+1. Clone the repository to any directory:
+
+#+begin_src bash
+  git clone https://github.com/rytswd/pi-agent-extensions-extra.git ~/path/to/pi-agent-extensions-extra
+#+end_src
+
+2. Add the package to pi's configuration by editing =~/.pi/agent/settings.json=:
+
+#+begin_src json
+  {
+    "packages": [
+      "/absolute/path/to/pi-agent-extensions-extra"
+    ]
+  }
+#+end_src
+
+#+html:</details>
+
+** ✨ Extensions
+
+#+html:<details>
+#+html:<summary><strong>telegram-connect</strong> - Bridge pi sessions to Telegram</summary>
+#+html:<br>
+
+- *Source*: [[https://github.com/rytswd/pi-agent-extensions-extra/tree/main/telegram-connect][telegram-connect/]]
+- *License*: MIT
+- *Command*: =/telegram=
+- *Config*: =~/.config/pi-telegram-connect/config.json=
+- *Based on*: [[https://github.com/aldoborrero/pi-agent-kit/tree/main/extensions/walkie][walkie]] by [[https://github.com/aldoborrero][aldoborrero]]
+
+*Description*: Bridges pi coding agent sessions to Telegram for mobile use. Fully bidirectional — agent responses are pushed to Telegram, and text/photos from Telegram are injected as user prompts.
+
+*Features*:
+- *Bidirectional messaging*: pi → Telegram responses with stats; Telegram → pi prompt injection
+- *Live draft streaming*: See the agent's response as it's generated via =sendMessageDraft= (512B/4s/12s throttle)
+- *Phase-aware heartbeat*: 🧠 Thinking… / 🔧 tool… status updates while the agent works
+- *Inline keyboards*: The agent can present tappable choice buttons
+- *Forum topics*: Scope each project to its own Telegram topic thread
+- *Message queue*: Messages arriving mid-run are queued and drained after each agent turn
+- *Text debounce*: Rapid consecutive messages are merged into one prompt (3s window)
+
+*Setup*:
+
+1. Talk to [[https://t.me/BotFather][@BotFather]] and create a new bot. Copy the bot token.
+2. In pi, run =/telegram setup= and enter the token.
+3. Send any message to your bot in Telegram to pair.
+
+*Pi commands*:
+| Command              | Description                                    |
+|----------------------+------------------------------------------------|
+| =/telegram=          | Toggle on/off                                  |
+| =/telegram setup=    | Enter pairing mode (interactive)               |
+| =/telegram start=    | Enable and start polling                       |
+| =/telegram stop=     | Disable and stop polling                       |
+| =/telegram stream=   | Toggle live draft streaming                    |
+| =/telegram status=   | Show current config                            |
+| =/telegram topic=    | Create a forum topic and bind this instance    |
+
+*Telegram commands* (from your phone):
+| Command    | Description                                 |
+|------------+---------------------------------------------|
+| =/abort=   | Stop the current agent run                  |
+| =/status=  | Show agent state, model, context usage      |
+| =/compact= | Compress context to free up space           |
+| =/new=     | Queue a new session request                 |
+| =/think=   | Cycle thinking level: none → low → high     |
+| =/stream=  | Toggle live draft preview                   |
+| =/mute=    | Silence notifications (polling continues)   |
+| =/unmute=  | Resume notifications                        |
+
+*Environment variables*:
+| Variable            | Description                              |
+|---------------------+------------------------------------------|
+| =PI_NO_TELEGRAM=1=  | Disable the extension entirely at startup |
+
+*Differences from walkie*:
+- No voice/STT support (removed entirely)
+- XDG-compliant config at =~/.config/pi-telegram-connect/= (Nix-store safe)
+- Standalone — no dependency on pi-agent-kit internals
+- Command: =/telegram= instead of =/walkie=
+
+#+html:</details>
+
+** ⚙️ Configuration
+
+Once installed, pi can use *all* of the extensions listed in this package's =package.json=. *By default, all extensions are enabled.*
+
+To manage which extensions are active, run:
+
+#+begin_src bash
+pi config
+#+end_src
+
+Changes are saved to =~/.pi/agent/settings.json= and take effect on the next pi session.
+
+** 🚀 Quick Start
+
+After installation, start using pi normally:
+
+#+begin_src bash
+pi
+#+end_src
+
+*** Try the Extensions
+
+- *telegram-connect:* Run =/telegram setup= to pair with your Telegram bot
+
+** 📁 Structure
+
+#+begin_example
+pi-agent-extensions-extra/
+├── telegram-connect/       # Telegram bridge
+│   ├── index.ts
+│   └── src/
+│       ├── telegram.ts     # Telegram Bot API client
+│       ├── format.ts       # Message formatting and draft state
+│       └── queue.ts        # Message queue
+├── package.json            # Package metadata and extension list
+├── .gitignore
+└── README.org              # This file
+#+end_example
+
+** 🔧 Adding New Extensions
+
+To add a new extension, create a directory with an =index.ts= file.
+
+A minimal extension looks like:
+
+#+begin_src typescript
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  pi.on("session_start", async (_event, ctx) => {
+    ctx.ui.notify("My extension loaded!", "info");
+  });
+}
+#+end_src
+
+See the [[https://github.com/mariozechner/pi][pi documentation]] for the full extension API.
+
+** 🙏 Acknowledgements
+
+- [[https://github.com/mariozechner][Mario Zechner]]: pi coding agent
+- [[https://github.com/aldoborrero][aldoborrero]]: [[https://github.com/aldoborrero/pi-agent-kit][pi-agent-kit]] — =telegram-connect= is based on the [[https://github.com/aldoborrero/pi-agent-kit/tree/main/extensions/walkie][walkie extension]]
+
+** 📄 License
+
+MIT

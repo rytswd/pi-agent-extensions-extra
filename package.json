@@ -1,0 +1,28 @@
+{
+  "name": "pi-agent-extensions-extra",
+  "version": "0.1.0",
+  "description": "Extra extensions for pi coding agent — useful for some, not all",
+  "type": "module",
+  "keywords": [
+    "pi-package"
+  ],
+  "author": "rytswd",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rytswd/pi-agent-extensions-extra.git"
+  },
+  "dependencies": {},
+  "peerDependencies": {
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-agent-core": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "telegram-connect"
+    ]
+  }
+}
