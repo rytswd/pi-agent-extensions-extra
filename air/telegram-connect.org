@@ -6,6 +6,10 @@
 
 A pi extension that bridges coding agent sessions to Telegram for mobile use. Bidirectional: agent responses are pushed to Telegram, and text/photos from Telegram are injected as user prompts.
 
+Supports two modes:
+- *Bridge mode*: connects via =pi-bridge= (persistent Go server) for multi-session safety.
+- *Direct mode*: polls Telegram API directly (fallback when bridge unavailable or no topic configured).
+
 Based on [[https://github.com/aldoborrero/pi-agent-kit/tree/main/extensions/walkie][walkie]] by [[https://github.com/aldoborrero][aldoborrero]], ported as a standalone extension with XDG-compliant config and no external dependencies.
 
 * Motivation
@@ -16,46 +20,100 @@ Working with pi on long-running tasks, you often switch context — go to anothe
 - Bidirectional messaging between pi and Telegram.
 - Live draft streaming so you see the response as it generates.
 - Session-scoped activation — must explicitly opt in, not auto-connect.
+- Multi-session safe via bridge with topic-based routing.
 - Config and credentials at =~/.config/pi-telegram-connect/= (XDG-compliant).
 - Zero npm dependencies.
 
 ** Non-Goals
 - Voice/STT transcription (removed from walkie port).
 - Auto-connecting all pi sessions to Telegram.
-- Persistent connection across pi restarts (see =telegram-bridge.org=).
 
 * Implementation
 
 ** Architecture
 
 #+begin_example
-pi session
-  │
-  ├─ /telegram start → load config, start polling loop
-  │
-  ├─ agent_start  → reset counters, start typing indicator, init draft state
-  ├─ message_update → append to draft buffer → sendMessageDraft (throttled)
-  ├─ turn_start   → increment turn counter
-  ├─ tool_call    → update phase label (🔧 tool…)
-  ├─ tool_result  → count file mutations
-  ├─ agent_end    → send final message (threaded reply), react ✅
-  │
-  └─ polling loop (background, AbortController-managed)
-       └─ getUpdates(timeout=30) → handleUpdate
-            ├─ text → react 👀, inject via sendUserMessage
-            └─ photo → download, inject as image content
+                    ┌─────────────────────────────────────┐
+                    │  pi-bridge (Go, persistent)          │
+                    │  single Telegram poller               │
+                    │  routes by topicId → sessionId        │
+                    └──────┬───────────┬──────────────────┘
+                           │SSE        │HTTP /send
+              ┌────────────┴──┐   ┌────┴──────────┐
+              │ pi session A  │   │ pi session B   │
+              │ topic=11      │   │ topic=12       │
+              │ (extensions)  │   │ (chronoa)      │
+              └───────────────┘   └────────────────┘
 #+end_example
 
+Without bridge (direct mode):
+#+begin_example
+pi session ←→ Telegram Bot API (getUpdates long-poll)
+#+end_example
+
+** Connection Modes
+
+*** Bridge mode (preferred)
+- Triggered when session has a =topicId= configured.
+- Extension checks =GET /health= on =127.0.0.1:19384=.
+- If bridge not running: spawns =pi-bridge= as detached process.
+- Creates bridge config from telegram-connect credentials if needed.
+- Registers via =POST /register=, listens on =GET /events= (SSE).
+- Heartbeat re-registers every 60s.
+- On bridge restart: SSE reconnect auto-respawns bridge and re-registers (~10s recovery).
+- Topic conflict: if another session already claims the same =topicId=, bridge returns 409 and extension falls back to direct mode.
+
+*** Direct mode (fallback)
+- Used when no =topicId= configured, or bridge unavailable.
+- Extension polls =getUpdates= directly — single-session only.
+- Multiple sessions in direct mode will race for updates (known limitation).
+
+** Session Lifecycle
+
+1. User runs =/telegram= or =/telegram start=.
+2. Extension loads config from =~/.config/pi-telegram-connect/config.json= + =<cwd>/.pi/telegram-connect.json=.
+3. If =topicId > 0=: try bridge mode. If bridge not running, spawn it.
+4. If =topicId == 0= or bridge fails: fall back to direct polling.
+5. =enabled= state is session-only — never persisted to config file.
+6. On =session_shutdown=: unregister from bridge, stop polling, clean up.
+
+** Status Bar
+
+Uses Nerd Font Telegram icon (=\uf2c6=) with topic name:
+- =  pi-agent-extensions= — connected with topic name
+- =  #7= — connected with topic ID only
+- =  on= — connected without topic (direct mode)
+- =(empty)= — disabled
+
 ** Key Design Decisions
-- *Session-scoped enabled*: =enabled= is never persisted to config file. Each session starts disabled.
-- *Forum topics*: Each project can have its own topic thread for multi-project routing.
+- *Session-scoped enabled*: =enabled= is never persisted. Each session starts disabled.
+- *Bridge config auto-creation*: =~/.config/pi-bridge/config.json= is created from telegram-connect credentials on first bridge spawn.
+- *Topic conflict rejection*: Bridge rejects duplicate topic registrations (409) to prevent message duplication.
+- *Sessions without topic skip bridge*: =topicId: 0= always uses direct polling to avoid routing ambiguity.
+- *SSE auto-recovery*: On bridge death, SSE client waits 10s, respawns bridge, re-registers, reconnects. Error logged once only (no spam).
+- *Draft streaming bypasses bridge*: =sendMessageDraft= calls go directly to Telegram API for low latency.
 - *Text debounce*: 3s window merges rapid consecutive messages into one prompt.
-- *Message queue*: Messages arriving mid-run are queued, drained after =agent_end=.
-- *Draft throttling*: 512B min delta, 4s min interval, 12s heartbeat, 3000B transport cap.
 - *Inline keyboards*: Agent can present tappable choice buttons via JSON block in response.
 
-** Known Limitation
+** Commands
 
-Multiple pi instances sharing the same bot token race for Telegram updates. =getUpdates= is destructive — whichever instance polls first consumes the update. Forum topic filtering helps with outbound routing but doesn't solve inbound races.
+Pi commands:
+| Command              | Description                                    |
+|----------------------+------------------------------------------------|
+| =/telegram=          | Toggle on/off                                  |
+| =/telegram setup=    | Enter pairing mode (interactive)               |
+| =/telegram start=    | Enable and start (bridge or direct)             |
+| =/telegram stop=     | Disable and disconnect                         |
+| =/telegram stream=   | Toggle live draft streaming                    |
+| =/telegram status=   | Show current config                            |
+| =/telegram topic=    | Create a forum topic (with duplicate check)    |
 
-See =air/telegram-bridge.org= for the planned solution.
+Telegram commands (from phone):
+=/abort=, =/status=, =/compact=, =/new=, =/think=, =/stream=, =/mute=, =/unmute=
+
+** Environment Variables
+
+| Variable              | Description                              |
+|-----------------------+------------------------------------------|
+| =PI_NO_TELEGRAM=1=    | Disable the extension at startup          |
+| =PI_BRIDGE_BIN=path=  | Override pi-bridge binary location        |

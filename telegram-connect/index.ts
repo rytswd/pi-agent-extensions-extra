@@ -56,6 +56,18 @@ import {
 	heartbeatDraft,
 	suppressDraftUntil,
 } from "./src/format.js";
+import {
+	isBridgeRunning,
+	spawnBridge,
+	ensureBridgeConfig,
+	killBridge,
+	registerSession,
+	unregisterSession,
+	startHeartbeat,
+	connectEventStream,
+	sendViaBridge,
+	type BridgeEvent,
+} from "./src/bridge-client.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -283,6 +295,12 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 	let setupModeTimer: ReturnType<typeof setTimeout> | null = null;
 	let lastCtx: ExtensionContext | null = null;
 
+	// Bridge mode state
+	let useBridge = false;
+	let bridgeSessionId = "";
+	let stopBridgeSSE: (() => void) | null = null;
+	let stopBridgeHeartbeat: (() => void) | null = null;
+
 	// ─── Per-run counters ────────────────────────────────────────────────
 
 	let agentStartTime: number | null = null;
@@ -394,11 +412,26 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 			setStatus("telegram", theme.fg("error", "telegram:unconfigured"));
 			return;
 		}
-		setStatus("telegram", theme.fg("success", "telegram:on"));
+		const tgIcon = "\uf2c6"; // Nerd Font: Telegram
+		const topic = config.topicName ?? (config.topicId ? `#${config.topicId}` : "");
+		const label = topic ? `${tgIcon} ${topic}` : `${tgIcon} on`;
+		setStatus("telegram", theme.fg("success", label));
 	}
 
 	async function send(text: string, extraOptions?: Partial<tg.SendMessageOptions>): Promise<number | null> {
 		if (!isActive(config)) return null;
+
+		// Route through bridge if connected
+		if (useBridge) {
+			const formatted = formatForTelegram(text);
+			const replyTo = (extraOptions?.reply_parameters as any)?.message_id ?? 0;
+			const result = await sendViaBridge("telegram", config.topicId ?? 0, formatted, {
+				parseMode: "HTML",
+				replyTo,
+			});
+			return result.messageId ?? null;
+		}
+
 		const { botToken, chatId } = config;
 
 		const { reply_markup, ...restExtra } = extraOptions ?? {};
@@ -499,6 +532,89 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 	function stopPolling(): void {
 		pollingAbort?.abort();
 		pollingAbort = null;
+	}
+
+	// ─── Bridge connection ─────────────────────────────────────────────
+
+	async function connectViaBridge(ctx: ExtensionContext): Promise<boolean> {
+		if (!isConfigured(config)) return false;
+
+		// Ensure bridge config exists (creates from telegram-connect config)
+		ensureBridgeConfig({
+			botToken: config.botToken,
+			chatId: config.chatId,
+			allowedUserId: config.allowedUserId,
+		});
+
+		// Check if bridge is running, spawn if needed
+		let running = await isBridgeRunning();
+		if (!running) {
+			running = await spawnBridge();
+		}
+		if (!running) return false;
+
+		// Generate session ID
+		bridgeSessionId = `${process.pid}-${Date.now()}`;
+		const topicId = config.topicId ?? 0;
+
+		if (topicId === 0) {
+			// No topic configured — can't route safely via bridge
+			// Fall back to direct polling
+			return false;
+		}
+
+		// Register with bridge
+		const ok = await registerSession(bridgeSessionId, ctx.cwd, "telegram", topicId);
+		if (!ok) {
+			if (ctx.hasUI) {
+				(lastCtx ?? ctx).ui.notify("Topic already claimed by another session — using direct polling", "warning");
+			}
+			return false;
+		}
+
+		useBridge = true;
+
+		// Start heartbeat
+		stopBridgeHeartbeat = startHeartbeat(bridgeSessionId, ctx.cwd, "telegram", topicId);
+
+		// Listen for inbound events via SSE (with auto-reregister on reconnect)
+		stopBridgeSSE = connectEventStream(
+			bridgeSessionId,
+			(evt: BridgeEvent) => handleBridgeEvent(evt),
+			undefined, // errors handled silently by bridge-client (logs once, auto-reconnects)
+			() => registerSession(bridgeSessionId, ctx.cwd, "telegram", topicId),
+		);
+
+		return true;
+	}
+
+	function disconnectBridge(): void {
+		if (stopBridgeSSE) { stopBridgeSSE(); stopBridgeSSE = null; }
+		if (stopBridgeHeartbeat) { stopBridgeHeartbeat(); stopBridgeHeartbeat = null; }
+		if (bridgeSessionId) {
+			unregisterSession(bridgeSessionId).catch(() => {});
+			bridgeSessionId = "";
+		}
+		useBridge = false;
+	}
+
+	function handleBridgeEvent(evt: BridgeEvent): void {
+		if (!lastCtx) return;
+
+		const text = evt.text;
+		if (!text) return;
+
+		// Telegram commands from phone
+		if (text.startsWith("/")) {
+			handleCommand(text).catch(() => {});
+			return;
+		}
+
+		// Text message → inject as user prompt
+		if (evt.type === "message") {
+			injectText(text, evt.messageId);
+		}
+		// Photos are handled by the bridge (file download) — not yet implemented
 	}
 
 	// ─── Polling Loop ───────────────────────────────────────────────────
@@ -779,11 +895,15 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 		lastCtx = ctx;
 		await reloadConfigForCwd(ctx);
 
-		// Only start polling if explicitly enabled (via config or /telegram start)
+		// Only start if explicitly enabled (via config or /telegram start)
 		if (!isActive(config)) return;
 
-		const initialOffset = await tg.getNextUpdateOffset(config.botToken).catch(() => 0);
-		startPolling(initialOffset).catch(() => {});
+		// Try bridge first, fall back to direct polling
+		const bridgeOk = await connectViaBridge(ctx);
+		if (!bridgeOk) {
+			const initialOffset = await tg.getNextUpdateOffset(config.botToken).catch(() => 0);
+			startPolling(initialOffset).catch(() => {});
+		}
 		await registerBotCommands(config.botToken, config.chatId);
 
 		const isFresh = ctx.sessionManager.getEntries().length === 0;
@@ -942,6 +1062,7 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async (_event, _ctx) => {
+		disconnectBridge();
 		stopPolling();
 		stopTimers();
 		if (setupModeTimer) { clearTimeout(setupModeTimer); setupModeTimer = null; }
@@ -973,12 +1094,19 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 			if (!sub) {
 				config.enabled = !config.enabled;
 				updateStatus(ctx);
-				ctx.ui.notify(config.enabled ? "Telegram enabled" : "Telegram disabled", "info");
 
-				if (config.enabled && isConfigured(config) && !pollingAbort) {
-					startPolling().catch(() => {});
+				if (config.enabled && isConfigured(config)) {
+					const bridgeOk = await connectViaBridge(ctx);
+					if (!bridgeOk && !pollingAbort) {
+						startPolling().catch(() => {});
+					}
+					const topicLabel = config.topicName ?? (config.topicId ? `topic #${config.topicId}` : "main chat");
+					const mode = bridgeOk ? "bridge" : "direct";
+					ctx.ui.notify(`Telegram enabled (${mode}) — ${topicLabel}`, "info");
 				} else if (!config.enabled) {
+					disconnectBridge();
 					stopPolling();
+					ctx.ui.notify("Telegram disabled", "info");
 				}
 				return;
 			}
@@ -1058,16 +1186,25 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 					config.enabled = true;
 					updateStatus(ctx);
 
-					if (isConfigured(config) && !pollingAbort) {
-						const initialOffset = await tg.getNextUpdateOffset(config.botToken).catch(() => 0);
-						startPolling(initialOffset).catch(() => {});
+					if (isConfigured(config)) {
+						// Try bridge first, fall back to direct polling
+						const bridgeOk = await connectViaBridge(ctx);
+						if (bridgeOk) {
+							const topicLabel = config.topicName ?? (config.topicId ? `topic #${config.topicId}` : "main chat");
+							ctx.ui.notify(`Telegram started (bridge) — ${topicLabel}`, "info");
+						} else if (!pollingAbort) {
+							const initialOffset = await tg.getNextUpdateOffset(config.botToken).catch(() => 0);
+							startPolling(initialOffset).catch(() => {});
+							const topicLabel2 = config.topicName ?? (config.topicId ? `topic #${config.topicId}` : "main chat");
+							ctx.ui.notify(`Telegram started (direct) — ${topicLabel2}`, "info");
+						}
 					}
-					ctx.ui.notify("Telegram started", "info");
 					break;
 				}
 
 				case "stop": {
 					config.enabled = false;
+					disconnectBridge();
 					stopPolling();
 					updateStatus(ctx);
 					ctx.ui.notify("Telegram stopped", "info");
@@ -1105,6 +1242,16 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 						ctx.ui.notify("Telegram not configured — run /telegram setup first.", "warning");
 						break;
 					}
+
+					// If topic already exists for this project, show it instead of creating a duplicate
+					if (config.topicId) {
+						const keep = await ctx.ui.confirm(
+							"Topic exists",
+							`Already bound to topic "${config.topicName ?? config.topicId}" (id: ${config.topicId}). Create a new one instead?`,
+						);
+						if (!keep) break;
+					}
+
 					const rawName = subArgs.trim();
 					const topicName = rawName || basename(ctx.cwd);
 					try {
