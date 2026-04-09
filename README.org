@@ -61,6 +61,28 @@ This command:
 
 #+html:</details>
 
+#+html:<details>
+#+html:<summary><b>Method 3: Copy Individual Extensions</b></summary>
+#+html:<br>
+
+For selective installation, copy specific extension directories to =~/.pi/agent/extensions/=:
+
+#+begin_src bash
+# Copy only the extensions you want
+cp -r /path/to/pi-agent-extensions-extra/telegram-connect ~/.pi/agent/extensions/
+#+end_src
+
+Extensions are auto-discovered from =~/.pi/agent/extensions/= — pi loads all =*.ts= files and =index.ts= files in subdirectories.
+
+*Note:* The =bridge/= directory is a Go binary, not a pi extension. Build it separately:
+
+#+begin_src bash
+cd /path/to/pi-agent-extensions-extra/bridge
+CGO_ENABLED=0 go install .
+#+end_src
+
+#+html:</details>
+
 ** ✨ Extensions
 
 #+html:<details>
@@ -130,10 +152,33 @@ The session is connected immediately after pairing. Future pi sessions need =/te
 |---------------------+------------------------------------------|
 | =PI_NO_TELEGRAM=1=  | Disable the extension entirely at startup |
 
+*Bridge mode (multi-session)*:
+
+When you configure a topic (via =/telegram topic= or =/telegram setup=), the extension uses =pi-bridge= — a lightweight Go server that handles all Telegram API polling centrally. Multiple pi sessions connect to the bridge via localhost, each routed by topic ID. No more message races between sessions.
+
+The bridge is spawned automatically on first =/telegram= if the =pi-bridge= binary is in your =PATH=. Build it once:
+
+#+begin_src bash
+  cd bridge
+  CGO_ENABLED=0 go install .
+  # Binary: $GOBIN/pi-bridge (typically ~/go/bin/pi-bridge)
+#+end_src
+
+Requires Go 1.23+. The binary is a single static executable with zero external dependencies.
+
+Alternatively, set =PI_BRIDGE_BIN= to point to the binary:
+
+#+begin_src bash
+  export PI_BRIDGE_BIN=/path/to/pi-bridge
+#+end_src
+
+Sessions without a topic fall back to direct Telegram polling (single-session only).
+
 *Differences from walkie*:
 - No voice/STT support (removed entirely)
 - XDG-compliant config at =~/.config/pi-telegram-connect/= (Nix-store safe)
 - Standalone — no dependency on pi-agent-kit internals
+- Multi-session safe via =pi-bridge= (Go server with adapter pattern)
 - Command: =/telegram= instead of =/walkie=
 
 #+html:</details>
@@ -166,15 +211,10 @@ pi
 
 #+begin_example
 pi-agent-extensions-extra/
-├── telegram-connect/       # Telegram bridge
-│   ├── index.ts
-│   └── src/
-│       ├── telegram.ts     # Telegram Bot API client
-│       ├── format.ts       # Message formatting and draft state
-│       └── queue.ts        # Message queue
-├── package.json            # Package metadata and extension list
-├── .gitignore
-└── README.org              # This file
+├── telegram-connect/       # Telegram extension (TypeScript)
+├── bridge/                 # Message bridge server (Go)
+├── package.json
+└── README.org
 #+end_example
 
 ** 🔧 Adding New Extensions
