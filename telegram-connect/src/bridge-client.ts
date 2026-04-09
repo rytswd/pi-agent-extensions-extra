@@ -12,9 +12,16 @@ import { join } from "node:path";
 
 const DEFAULT_PORT = 19384;
 
+/** Resolve bridge config directory. See .ref/config-dir.org for convention. */
 function bridgeConfigDir(): string {
-	const xdg = process.env.XDG_CONFIG_HOME;
-	return join(xdg || join(homedir(), ".config"), "pi-bridge");
+	const override = join(homedir(), ".pi", "agent", "pi-agent-extensions.json");
+	try {
+		const { readFileSync } = require("node:fs");
+		const cfg = JSON.parse(readFileSync(override, "utf-8"));
+		if (cfg.configDir) return join(cfg.configDir, "bridge");
+	} catch {}
+	const base = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+	return join(base, "pi-agent-extensions", "bridge");
 }
 
 function bridgePort(): number {

@@ -107,12 +107,25 @@ type bridgeConfig struct {
 	Adapters []adapterConfig `json:"adapters"`
 }
 
+// Resolve config directory. See .ref/config-dir.org for convention.
 func configDir() string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "pi-bridge")
-	}
+	// 1. Check override file
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "pi-bridge")
+	overrideFile := filepath.Join(home, ".pi", "agent", "pi-agent-extensions.json")
+	if data, err := os.ReadFile(overrideFile); err == nil {
+		var override struct {
+			ConfigDir string `json:"configDir"`
+		}
+		if json.Unmarshal(data, &override) == nil && override.ConfigDir != "" {
+			return filepath.Join(override.ConfigDir, "bridge")
+		}
+	}
+	// 2. XDG_CONFIG_HOME
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "pi-agent-extensions", "bridge")
+	}
+	// 3. Default
+	return filepath.Join(home, ".config", "pi-agent-extensions", "bridge")
 }
 
 func configPath() string {

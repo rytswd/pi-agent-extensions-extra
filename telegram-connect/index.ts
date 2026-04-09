@@ -71,7 +71,18 @@ import {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const CONFIG_DIR = join(homedir(), ".config", "pi-telegram-connect");
+/** Resolve config directory. See .ref/config-dir.org for convention. */
+function getConfigDir(): string {
+	const override = join(homedir(), ".pi", "agent", "pi-agent-extensions.json");
+	try {
+		const cfg = JSON.parse(readFileSync(override, "utf-8"));
+		if (cfg.configDir) return join(cfg.configDir, "telegram-connect");
+	} catch {}
+	const base = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+	return join(base, "pi-agent-extensions", "telegram-connect");
+}
+
+const CONFIG_DIR = getConfigDir();
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 
 interface TelegramConnectConfig {
@@ -110,7 +121,7 @@ function loadProjectConfigSync(cwd: string): Partial<TelegramConnectConfig> {
 }
 
 /**
- * Persist global config to ~/.config/pi-telegram-connect/config.json.
+ * Persist global config. See .ref/config-dir.org for convention.
  * topicId and topicName are project-specific — use persistProjectConfig() for those.
  */
 async function persistConfig(config: Partial<TelegramConnectConfig>): Promise<void> {
@@ -414,8 +425,8 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 		}
 		const tgIcon = "\uf2c6"; // Nerd Font: Telegram
 		const topic = config.topicName ?? (config.topicId ? `#${config.topicId}` : "");
-		const label = topic ? `${tgIcon} ${topic}` : `${tgIcon} on`;
-		setStatus("telegram", theme.fg("success", label));
+		const label = topic ? `${tgIcon} ${topic}` : `${tgIcon} tg`;
+		setStatus("telegram", theme.fg("dim", label));
 	}
 
 	async function send(text: string, extraOptions?: Partial<tg.SendMessageOptions>): Promise<number | null> {
