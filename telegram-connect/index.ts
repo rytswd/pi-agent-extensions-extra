@@ -102,7 +102,8 @@ function loadProjectConfigSync(cwd: string): Partial<TelegramConnectConfig> {
  * topicId and topicName are project-specific — use persistProjectConfig() for those.
  */
 async function persistConfig(config: Partial<TelegramConnectConfig>): Promise<void> {
-	const { topicId, topicName, ...globalFields } = config;
+	// Never persist enabled — it's session-only (opt-in per session)
+	const { topicId, topicName, enabled, ...globalFields } = config;
 	try {
 		await mkdir(CONFIG_DIR, { recursive: true });
 		await writeFile(CONFIG_PATH, JSON.stringify(globalFields, null, 2) + "\n", "utf8");
@@ -366,7 +367,7 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 	// ─── Helpers ───────────────────────────────────────────────────────
 
 	async function reloadConfigForCwd(ctx: ExtensionContext): Promise<void> {
-		config = { enabled: true, streaming: true, ...loadConfigSync(), ...loadProjectConfigSync(ctx.cwd) };
+		config = { enabled: false, streaming: true, ...loadConfigSync(), ...loadProjectConfigSync(ctx.cwd) };
 		updateStatus(ctx);
 
 		if (isConfigured(config)) {
@@ -380,7 +381,9 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 		const theme = ctx.ui.theme;
 
 		if (!config.enabled) {
-			setStatus("telegram", theme.fg("warning", "telegram:off"));
+			// Only show "off" if it was explicitly disabled (configured but off).
+			// Don't clutter the status bar when telegram was never started.
+			setStatus("telegram", undefined);
 			return;
 		}
 		if (setupMode) {
@@ -549,13 +552,14 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 	async function handleSetupPairing(msg: tg.TelegramMessage): Promise<void> {
 		config.chatId = msg.chat.id;
 		config.allowedUserId = msg.from!.id;
-		config.enabled = true;
+		config.enabled = true; // Enable for THIS session
 		setupMode = false;
 		if (setupModeTimer) { clearTimeout(setupModeTimer); setupModeTimer = null; }
-		await persistConfig(config);
+		// Persist credentials but NOT enabled state — each session opts in explicitly
+		await persistConfig({ ...config, enabled: false });
 		if (lastCtx) updateStatus(lastCtx);
 		await registerBotCommands(config.botToken!, config.chatId);
-		await tg.sendMessage(config.botToken!, config.chatId, "✅ Paired! Pi will send updates to this chat.", topicOptions(config)).catch(() => {});
+		await tg.sendMessage(config.botToken!, config.chatId, "✅ Paired and connected! This session is now linked. Future sessions need /telegram or /telegram start to reconnect.", topicOptions(config)).catch(() => {});
 	}
 
 	async function handleCallbackQuery(cq: tg.TelegramCallbackQuery): Promise<void> {
@@ -674,13 +678,11 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 			case "/mute":
 				await sendPlain("🔕 Notifications muted. Send /unmute to resume.").catch(() => {});
 				config.enabled = false;
-				await persistConfig(config);
 				if (lastCtx) updateStatus(lastCtx);
 				break;
 
 			case "/unmute":
 				config.enabled = true;
-				await persistConfig(config);
 				if (lastCtx) updateStatus(lastCtx);
 				await sendPlain("🔔 Notifications resumed.").catch(() => {});
 				break;
@@ -777,18 +779,15 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 		lastCtx = ctx;
 		await reloadConfigForCwd(ctx);
 
-		if (!config.botToken) return;
-		const initialOffset = isConfigured(config)
-			? await tg.getNextUpdateOffset(config.botToken).catch(() => 0)
-			: 0;
-		startPolling(initialOffset).catch(() => {});
+		// Only start polling if explicitly enabled (via config or /telegram start)
+		if (!isActive(config)) return;
 
-		if (isConfigured(config)) {
-			await registerBotCommands(config.botToken, config.chatId);
-		}
+		const initialOffset = await tg.getNextUpdateOffset(config.botToken).catch(() => 0);
+		startPolling(initialOffset).catch(() => {});
+		await registerBotCommands(config.botToken, config.chatId);
 
 		const isFresh = ctx.sessionManager.getEntries().length === 0;
-		if (isFresh && isConfigured(config)) {
+		if (isFresh) {
 			const projectName = config.topicName ?? basename(ctx.cwd);
 			await sendPlain(`🟢 Pi started · ${projectName}`).catch(() => {});
 		}
@@ -973,7 +972,6 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 			// No arg: toggle
 			if (!sub) {
 				config.enabled = !config.enabled;
-				await persistConfig(config);
 				updateStatus(ctx);
 				ctx.ui.notify(config.enabled ? "Telegram enabled" : "Telegram disabled", "info");
 
@@ -1039,8 +1037,7 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 						}
 					}, SETUP_MODE_TTL_MS);
 
-					config.enabled = true;
-					await persistConfig(config);
+					config.enabled = true; // Session-only for setup pairing
 					await persistProjectConfig(ctx.cwd, { topicId: config.topicId, topicName: config.topicName });
 					updateStatus(ctx);
 
@@ -1059,7 +1056,6 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 
 				case "start": {
 					config.enabled = true;
-					await persistConfig(config);
 					updateStatus(ctx);
 
 					if (isConfigured(config) && !pollingAbort) {
@@ -1072,7 +1068,6 @@ export default function telegramConnectExtension(pi: ExtensionAPI) {
 
 				case "stop": {
 					config.enabled = false;
-					await persistConfig(config);
 					stopPolling();
 					updateStatus(ctx);
 					ctx.ui.notify("Telegram stopped", "info");

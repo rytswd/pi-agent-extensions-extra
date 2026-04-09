@@ -84,11 +84,23 @@ This command:
 - *Message queue*: Messages arriving mid-run are queued and drained after each agent turn
 - *Text debounce*: Rapid consecutive messages are merged into one prompt (3s window)
 
-*Setup*:
+*Setup (private chat)*:
 
 1. Talk to [[https://t.me/BotFather][@BotFather]] and create a new bot. Copy the bot token.
 2. In pi, run =/telegram setup= and enter the token.
 3. Send any message to your bot in Telegram to pair.
+
+*Setup (group with topics)*:
+
+Use a group when you want per-project topic threads (each pi project gets its own topic in the group).
+
+1. Create a Telegram group and enable *Topics* in the group settings (this auto-converts to a supergroup).
+2. Add your bot to the group and make it an *admin*.
+3. In pi, run =/telegram setup= and enter the bot token.
+4. Send a message *in the group* (not in private chat) to pair — the extension picks up the group's chat ID.
+5. Optionally run =/telegram topic= to create a dedicated topic thread for this project.
+
+The session is connected immediately after pairing. Future pi sessions need =/telegram= or =/telegram start= to reconnect (credentials are remembered).
 
 *Pi commands*:
 | Command              | Description                                    |
